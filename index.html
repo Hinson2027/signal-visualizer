@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Signal Visualizer 訊號視覺化工具</title>
+<style>
+  :root { --bg:#0f1420; --panel:#182032; --accent:#4cc9f0; --accent2:#f72585; --text:#e8ecf4; --muted:#8b94a7; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif; padding:20px; max-width:960px; margin:0 auto; }
+  h1 { font-size:1.6rem; margin-bottom:4px; }
+  .sub { color:var(--muted); margin-bottom:20px; font-size:.95rem; }
+  .tabs { display:flex; gap:8px; margin-bottom:16px; }
+  .tab-btn { background:var(--panel); color:var(--text); border:1px solid #2a3650; padding:10px 18px; border-radius:8px; cursor:pointer; font-size:1rem; }
+  .tab-btn.active { background:var(--accent); color:#06222e; border-color:var(--accent); font-weight:700; }
+  .panel { background:var(--panel); border:1px solid #2a3650; border-radius:12px; padding:20px; display:none; }
+  .panel.active { display:block; }
+  .controls { display:flex; flex-wrap:wrap; gap:16px; margin-bottom:16px; align-items:center; }
+  .ctl label { display:block; color:var(--muted); font-size:.85rem; margin-bottom:4px; }
+  .ctl select, .ctl input[type=range] { accent-color:var(--accent); }
+  .ctl select { background:#0f1420; color:var(--text); border:1px solid #2a3650; border-radius:6px; padding:6px 10px; font-size:1rem; }
+  .val { color:var(--accent); font-weight:700; }
+  canvas { width:100%; background:#0b0f1a; border-radius:8px; border:1px solid #232e47; }
+  .formula { margin-top:12px; color:var(--muted); font-size:.9rem; line-height:1.7; }
+  .formula b { color:var(--text); }
+  .legend { display:flex; gap:18px; margin-top:10px; font-size:.85rem; color:var(--muted); }
+  .sw { display:inline-block; width:22px; height:4px; border-radius:2px; vertical-align:middle; margin-right:6px; }
+  footer { margin-top:24px; color:var(--muted); font-size:.8rem; text-align:center; }
+</style>
+</head>
+<body>
+<h1>📡 Signal Visualizer</h1>
+<p class="sub">訊號與系統互動視覺化工具 — 傅立葉級數 · 濾波器頻率響應</p>
+
+<div class="tabs">
+  <button class="tab-btn active" data-tab="fourier">傅立葉級數</button>
+  <button class="tab-btn" data-tab="filter">濾波器頻率響應</button>
+</div>
+
+<!-- Fourier panel -->
+<div class="panel active" id="panel-fourier">
+  <div class="controls">
+    <div class="ctl">
+      <label>波形</label>
+      <select id="waveType">
+        <option value="square">方波 Square</option>
+        <option value="sawtooth">鋸齒波 Sawtooth</option>
+        <option value="triangle">三角波 Triangle</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label>諧波數量 N = <span class="val" id="nVal">5</span></label>
+      <input type="range" id="harmonics" min="1" max="50" value="5" style="width:220px">
+    </div>
+  </div>
+  <canvas id="fourierCanvas" height="320"></canvas>
+  <div class="legend">
+    <span><span class="sw" style="background:#8b94a7"></span>目標波形</span>
+    <span><span class="sw" style="background:#4cc9f0"></span>傅立葉級數近似</span>
+  </div>
+  <div class="formula" id="fourierFormula"></div>
+</div>
+
+<!-- Filter panel -->
+<div class="panel" id="panel-filter">
+  <div class="controls">
+    <div class="ctl">
+      <label>濾波器類型</label>
+      <select id="filterType">
+        <option value="lowpass">低通 Low-pass (RC)</option>
+        <option value="highpass">高通 High-pass (RC)</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label>截止頻率 fc = <span class="val" id="fcVal">1000</span> Hz</label>
+      <input type="range" id="cutoff" min="10" max="10000" value="1000" step="10" style="width:220px">
+    </div>
+  </div>
+  <canvas id="bodeMag" height="220"></canvas>
+  <div class="legend"><span><span class="sw" style="background:#4cc9f0"></span>增益 (dB)</span><span style="color:#f72585">●</span><span> -3 dB 點</span></div>
+  <canvas id="bodePhase" height="220" style="margin-top:12px"></canvas>
+  <div class="legend"><span><span class="sw" style="background:#f72585"></span>相位 (度)</span></div>
+  <div class="formula" id="filterFormula"></div>
+</div>
+
+<footer>Built for EE signals &amp; systems study · 純前端，離線可用</footer>
+
+<script>
+// ---------- tabs ----------
+document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.tab-btn').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  document.getElementById('panel-' + b.dataset.tab).classList.add('active');
+  drawFourier(); drawBode();
+}));
+
+function setupCanvas(c) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.getAttribute('height');
+  c.width = w * dpr; c.height = h * dpr;
+  const ctx = c.getContext('2d'); ctx.scale(dpr, dpr);
+  return [ctx, w, +h];
+}
+
+// ---------- Fourier ----------
+const waveType = document.getElementById('waveType');
+const harmonics = document.getElementById('harmonics');
+const nVal = document.getElementById('nVal');
+harmonics.addEventListener('input', () => { nVal.textContent = harmonics.value; drawFourier(); });
+waveType.addEventListener('change', drawFourier);
+
+function targetWave(type, t) { // t in [0, 2π)
+  const x = t / Math.PI - 1; // [-1, 1)
+  if (type === 'square') return x < 0 ? -1 : 1;
+  if (type === 'sawtooth') return x;
+  return 1 - Math.abs(x) * 2 + (x < 0 ? 0 : 0), Math.abs(x) < 1 ? (x <= 0 ? 1 + 2 * x : 1 - 2 * x) : 0; // triangle
+}
+function fourierSum(type, t, N) {
+  let s = 0;
+  for (let k = 1; k <= N; k++) {
+    if (type === 'square') {
+      const n = 2 * k - 1;
+      s += (4 / Math.PI) * Math.sin(n * t) / n;
+    } else if (type === 'sawtooth') {
+      s += (2 / Math.PI) * Math.pow(-1, k + 1) * Math.sin(k * t) / k;
+    } else { // triangle
+      const n = 2 * k - 1;
+      s += (8 / Math.PI / Math.PI) * Math.pow(-1, k + 1) * Math.sin(n * t) / (n * n);
+    }
+  }
+  return s;
+}
+const FORMULAS = {
+  square: '<b>方波：</b> x(t) = 4/π · Σ<sub>k=1..N</sub> sin((2k−1)t) / (2k−1)',
+  sawtooth: '<b>鋸齒波：</b> x(t) = 2/π · Σ<sub>k=1..N</sub> (−1)<sup>k+1</sup> sin(kt) / k',
+  triangle: '<b>三角波：</b> x(t) = 8/π² · Σ<sub>k=1..N</sub> (−1)<sup>k+1</sup> sin((2k−1)t) / (2k−1)²'
+};
+function drawFourier() {
+  const c = document.getElementById('fourierCanvas');
+  const [ctx, W, H] = setupCanvas(c);
+  const type = waveType.value, N = +harmonics.value;
+  const mid = H / 2, amp = H * 0.38, pts = 400;
+  ctx.clearRect(0, 0, W, H);
+  ctx.strokeStyle = '#232e47'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(W, mid); ctx.stroke();
+  // target
+  ctx.strokeStyle = '#8b94a7'; ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]);
+  ctx.beginPath();
+  for (let i = 0; i <= pts; i++) {
+    const t = (i / pts) * 2 * Math.PI, x = (i / pts) * W, y = mid - targetWave(type, t) * amp;
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+  ctx.stroke(); ctx.setLineDash([]);
+  // approximation
+  ctx.strokeStyle = '#4cc9f0'; ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  for (let i = 0; i <= pts; i++) {
+    const t = (i / pts) * 2 * Math.PI, x = (i / pts) * W, y = mid - fourierSum(type, t, N) * amp;
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+  ctx.stroke();
+  document.getElementById('fourierFormula').innerHTML = FORMULAS[type] +
+    '<br>留意跳變位嘅過衝（Gibbs 現象）：就算 N → ∞，過衝依然存在。';
+}
+
+// ---------- Bode ----------
+const filterType = document.getElementById('filterType');
+const cutoff = document.getElementById('cutoff');
+const fcVal = document.getElementById('fcVal');
+cutoff.addEventListener('input', () => { fcVal.textContent = cutoff.value; drawBode(); });
+filterType.addEventListener('change', drawBode);
+
+function drawBode() {
+  const type = filterType.value, fc = +cutoff.value;
+  const fMin = 1, fMax = 1e6, pts = 300;
+  const resp = f => {
+    const w = f / fc;
+    if (type === 'lowpass') {
+      const m = 1 / Math.sqrt(1 + w * w), p = -Math.atan(w) * 180 / Math.PI;
+      return [20 * Math.log10(m), p];
+    }
+    const m = w / Math.sqrt(1 + w * w), p = 90 - Math.atan(w) * 180 / Math.PI;
+    return [20 * Math.log10(m), p];
+  };
+  plotLog(document.getElementById('bodeMag'), fMin, fMax, pts,
+    f => resp(f)[0], -60, 5, '#4cc9f0', 'dB', fc, -3);
+  plotLog(document.getElementById('bodePhase'), fMin, fMax, pts,
+    f => resp(f)[1], type === 'lowpass' ? -95 : -5, type === 'lowpass' ? 5 : 95, '#f72585', '°', fc, null);
+  document.getElementById('filterFormula').innerHTML =
+    type === 'lowpass'
+      ? '<b>RC 低通：</b> H(jω) = 1 / (1 + jωRC)，fc = 1/(2πRC)。頻率高過 fc 之後每十倍頻衰減 20 dB。'
+      : '<b>RC 高通：</b> H(jω) = jωRC / (1 + jωRC)，fc = 1/(2πRC)。頻率低過 fc 之前每十倍頻衰減 20 dB。';
+}
+function plotLog(c, fMin, fMax, pts, fn, yMin, yMax, color, unit, fcMark, markVal) {
+  const [ctx, W, H] = setupCanvas(c);
+  const pad = 8;
+  const X = f => pad + (Math.log10(f) - Math.log10(fMin)) / (Math.log10(fMax) - Math.log10(fMin)) * (W - 2 * pad);
+  const Y = v => H - pad - (v - yMin) / (yMax - yMin) * (H - 2 * pad);
+  ctx.clearRect(0, 0, W, H);
+  ctx.strokeStyle = '#232e47'; ctx.lineWidth = 1;
+  for (let e = Math.ceil(Math.log10(fMin)); e <= Math.log10(fMax); e++) {
+    ctx.beginPath(); ctx.moveTo(X(Math.pow(10, e)), 0); ctx.lineTo(X(Math.pow(10, e)), H); ctx.stroke();
+  }
+  ctx.strokeStyle = color; ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  for (let i = 0; i <= pts; i++) {
+    const f = Math.pow(10, Math.log10(fMin) + (i / pts) * (Math.log10(fMax) - Math.log10(fMin)));
+    const x = X(f), y = Y(fn(f));
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+  ctx.stroke();
+  if (fcMark && markVal !== null) { // -3dB marker
+    const x = X(fcMark), y = Y(markVal);
+    ctx.fillStyle = '#f72585';
+    ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill();
+    ctx.fillStyle = '#e8ecf4'; ctx.font = '12px sans-serif';
+    ctx.fillText('fc = ' + fcMark + ' Hz', Math.min(x + 8, W - 110), y - 8);
+  }
+  ctx.fillStyle = '#8b94a7'; ctx.font = '11px sans-serif';
+  ctx.fillText(yMax + unit, 4, 14); ctx.fillText(yMin + unit, 4, H - 4);
+}
+
+window.addEventListener('resize', () => { drawFourier(); drawBode(); });
+drawFourier(); drawBode();
+</script>
+</body>
+</html>
