@@ -53,7 +53,7 @@
       <input type="range" id="harmonics" min="1" max="50" value="5" style="width:220px">
     </div>
   </div>
-  <canvas id="fourierCanvas" height="320"></canvas>
+  <canvas id="fourierCanvas" width="900" height="320"></canvas>
   <div class="legend">
     <span><span class="sw" style="background:#8b94a7"></span>目標波形</span>
     <span><span class="sw" style="background:#4cc9f0"></span>傅立葉級數近似</span>
@@ -76,9 +76,9 @@
       <input type="range" id="cutoff" min="10" max="10000" value="1000" step="10" style="width:220px">
     </div>
   </div>
-  <canvas id="bodeMag" height="220"></canvas>
+  <canvas id="bodeMag" width="900" height="220"></canvas>
   <div class="legend"><span><span class="sw" style="background:#4cc9f0"></span>增益 (dB)</span><span style="color:#f72585">●</span><span> -3 dB 點</span></div>
-  <canvas id="bodePhase" height="220" style="margin-top:12px"></canvas>
+  <canvas id="bodePhase" width="900" height="220" style="margin-top:12px"></canvas>
   <div class="legend"><span><span class="sw" style="background:#f72585"></span>相位 (度)</span></div>
   <div class="formula" id="filterFormula"></div>
 </div>
@@ -87,29 +87,28 @@
 
 <script>
 // ---------- tabs ----------
-let activeTab = 'fourier';
 document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => {
   document.querySelectorAll('.tab-btn').forEach(x => x.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
   b.classList.add('active');
   document.getElementById('panel-' + b.dataset.tab).classList.add('active');
-  activeTab = b.dataset.tab;
-  if (activeTab === 'fourier') drawFourier(); else drawBode();
+  drawFourier(); drawBode();
 }));
 
-// Canvas sizing: bitmap follows CSS width × DPR. Never write width=0 — a
-// 0-width canvas with CSS width:100% renders absurdly tall. If the canvas is
-// hidden (clientWidth 0) skip the draw; the tab switch redraws once visible.
+// Fixed standard frame: every chart lives in the same logical coordinate
+// space (900 wide), so the frame never stretches, shifts or depends on when
+// the browser does layout. CSS (width:100%; height:auto) scales the frame
+// proportionally to any screen. Bitmap follows devicePixelRatio for sharpness.
+const FRAME = { fourierCanvas: [900, 320], bodeMag: [900, 220], bodePhase: [900, 220] };
 function setupCanvas(c) {
-  const w = c.clientWidth;
-  if (!w) return null;
+  const f = FRAME[c.id] || [900, 300];
+  const lw = f[0], lh = f[1];
   const dpr = window.devicePixelRatio || 1;
-  const h = +c.getAttribute('height');
-  const W = Math.round(w * dpr), H = Math.round(h * dpr);
+  const W = Math.round(lw * dpr), H = Math.round(lh * dpr);
   if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
   const ctx = c.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  return [ctx, w, h];
+  return [ctx, lw, lh];
 }
 
 // ---------- Fourier ----------
@@ -147,9 +146,7 @@ const FORMULAS = {
 };
 function drawFourier() {
   const c = document.getElementById('fourierCanvas');
-  const s = setupCanvas(c);
-  if (!s) return;
-  const [ctx, W, H] = s;
+  const [ctx, W, H] = setupCanvas(c);
   const type = waveType.value, N = +harmonics.value;
   const mid = H / 2, amp = H * 0.38, pts = 400;
   ctx.clearRect(0, 0, W, H);
@@ -204,9 +201,7 @@ function drawBode() {
       : '<b>RC 高通：</b> H(jω) = jωRC / (1 + jωRC)，fc = 1/(2πRC)。頻率低過 fc 之前每十倍頻衰減 20 dB。';
 }
 function plotLog(c, fMin, fMax, pts, fn, yMin, yMax, color, unit, fcMark, markVal) {
-  const s = setupCanvas(c);
-  if (!s) return;
-  const [ctx, W, H] = s;
+  const [ctx, W, H] = setupCanvas(c);
   const pad = 8;
   const X = f => pad + (Math.log10(f) - Math.log10(fMin)) / (Math.log10(fMax) - Math.log10(fMin)) * (W - 2 * pad);
   const Y = v => H - pad - (v - yMin) / (yMax - yMin) * (H - 2 * pad);
@@ -227,17 +222,17 @@ function plotLog(c, fMin, fMax, pts, fn, yMin, yMax, color, unit, fcMark, markVa
     const x = X(fcMark), y = Y(markVal);
     ctx.fillStyle = '#f72585';
     ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill();
-    ctx.fillStyle = '#e8ecf4'; ctx.font = '12px sans-serif';
-    ctx.fillText('fc = ' + fcMark + ' Hz', Math.min(x + 8, W - 110), y - 8);
+    ctx.fillStyle = '#e8ecf4'; ctx.font = '18px sans-serif';
+    ctx.fillText('fc = ' + fcMark + ' Hz', Math.min(x + 8, W - 170), y - 10);
   }
-  ctx.fillStyle = '#8b94a7'; ctx.font = '11px sans-serif';
+  ctx.fillStyle = '#8b94a7'; ctx.font = '16px sans-serif';
   ctx.fillText(yMax + unit, 4, 14); ctx.fillText(yMin + unit, 4, H - 4);
 }
 
 let resizeT;
 window.addEventListener('resize', () => {
   clearTimeout(resizeT);
-  resizeT = setTimeout(() => { activeTab === 'fourier' ? drawFourier() : drawBode(); }, 120);
+  resizeT = setTimeout(() => { drawFourier(); drawBode(); }, 150);
 });
 drawFourier(); drawBode();
 </script>
