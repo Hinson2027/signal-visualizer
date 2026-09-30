@@ -20,7 +20,7 @@
   .ctl select, .ctl input[type=range] { accent-color:var(--accent); }
   .ctl select { background:#0f1420; color:var(--text); border:1px solid #2a3650; border-radius:6px; padding:6px 10px; font-size:1rem; }
   .val { color:var(--accent); font-weight:700; }
-  canvas { width:100%; background:#0b0f1a; border-radius:8px; border:1px solid #232e47; }
+  canvas { width:100%; height:auto; display:block; background:#0b0f1a; border-radius:8px; border:1px solid #232e47; }
   .formula { margin-top:12px; color:var(--muted); font-size:.9rem; line-height:1.7; }
   .formula b { color:var(--text); }
   .legend { display:flex; gap:18px; margin-top:10px; font-size:.85rem; color:var(--muted); }
@@ -87,20 +87,29 @@
 
 <script>
 // ---------- tabs ----------
+let activeTab = 'fourier';
 document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => {
   document.querySelectorAll('.tab-btn').forEach(x => x.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
   b.classList.add('active');
   document.getElementById('panel-' + b.dataset.tab).classList.add('active');
-  drawFourier(); drawBode();
+  activeTab = b.dataset.tab;
+  if (activeTab === 'fourier') drawFourier(); else drawBode();
 }));
 
+// Canvas sizing: bitmap follows CSS width × DPR. Never write width=0 — a
+// 0-width canvas with CSS width:100% renders absurdly tall. If the canvas is
+// hidden (clientWidth 0) skip the draw; the tab switch redraws once visible.
 function setupCanvas(c) {
+  const w = c.clientWidth;
+  if (!w) return null;
   const dpr = window.devicePixelRatio || 1;
-  const w = c.clientWidth, h = c.getAttribute('height');
-  c.width = w * dpr; c.height = h * dpr;
-  const ctx = c.getContext('2d'); ctx.scale(dpr, dpr);
-  return [ctx, w, +h];
+  const h = +c.getAttribute('height');
+  const W = Math.round(w * dpr), H = Math.round(h * dpr);
+  if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+  const ctx = c.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return [ctx, w, h];
 }
 
 // ---------- Fourier ----------
@@ -138,7 +147,9 @@ const FORMULAS = {
 };
 function drawFourier() {
   const c = document.getElementById('fourierCanvas');
-  const [ctx, W, H] = setupCanvas(c);
+  const s = setupCanvas(c);
+  if (!s) return;
+  const [ctx, W, H] = s;
   const type = waveType.value, N = +harmonics.value;
   const mid = H / 2, amp = H * 0.38, pts = 400;
   ctx.clearRect(0, 0, W, H);
@@ -193,7 +204,9 @@ function drawBode() {
       : '<b>RC 高通：</b> H(jω) = jωRC / (1 + jωRC)，fc = 1/(2πRC)。頻率低過 fc 之前每十倍頻衰減 20 dB。';
 }
 function plotLog(c, fMin, fMax, pts, fn, yMin, yMax, color, unit, fcMark, markVal) {
-  const [ctx, W, H] = setupCanvas(c);
+  const s = setupCanvas(c);
+  if (!s) return;
+  const [ctx, W, H] = s;
   const pad = 8;
   const X = f => pad + (Math.log10(f) - Math.log10(fMin)) / (Math.log10(fMax) - Math.log10(fMin)) * (W - 2 * pad);
   const Y = v => H - pad - (v - yMin) / (yMax - yMin) * (H - 2 * pad);
@@ -221,7 +234,11 @@ function plotLog(c, fMin, fMax, pts, fn, yMin, yMax, color, unit, fcMark, markVa
   ctx.fillText(yMax + unit, 4, 14); ctx.fillText(yMin + unit, 4, H - 4);
 }
 
-window.addEventListener('resize', () => { drawFourier(); drawBode(); });
+let resizeT;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeT);
+  resizeT = setTimeout(() => { activeTab === 'fourier' ? drawFourier() : drawBode(); }, 120);
+});
 drawFourier(); drawBode();
 </script>
 </body>
